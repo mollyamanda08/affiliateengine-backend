@@ -13,16 +13,22 @@ const { body, validationResult } = require('express-validator');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
+
+// ── Trust Proxy (MUST be first) ─────────────────────────────
 app.set('trust proxy', 1);
+
+// ── Middleware ──────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({ origin: '*', methods: ['GET','POST','PUT','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'], credentials: false }));
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: false }));
 
-const globalLimiter = rateLimit({ windowMs: 15*60*1000, max: 100 });
-const authLimiter   = rateLimit({ windowMs: 15*60*1000, max: 20 });
+// ── Rate Limiting ───────────────────────────────────────────
+const globalLimiter = rateLimit({ windowMs: 15*60*1000, max: 100, standardHeaders: true, legacyHeaders: false });
+const authLimiter   = rateLimit({ windowMs: 15*60*1000, max: 20,  standardHeaders: true, legacyHeaders: false });
 app.use(globalLimiter);
 
+// ── MongoDB ─────────────────────────────────────────────────
 const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
 console.log('MongoDB URI exists:', !!MONGO_URI);
 
@@ -34,6 +40,7 @@ if (!MONGO_URI) {
     .catch(err => console.error('❌ MongoDB Error:', err.message));
 }
 
+// ── Schemas ─────────────────────────────────────────────────
 const userSchema = new mongoose.Schema({
   name:       { type: String, required: true, trim: true },
   email:      { type: String, required: true, unique: true, lowercase: true },
@@ -66,14 +73,15 @@ otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const OTP = mongoose.models.OTP || mongoose.model('OTP', otpSchema);
 
+// ── Email ───────────────────────────────────────────────────
 function createTransporter() {
   return nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 465,
     secure: true,
-    auth: { 
-      user: process.env.EMAIL_USER, 
-      pass: process.env.EMAIL_PASS 
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
     }
   });
 }
@@ -82,7 +90,12 @@ async function sendVerificationEmail(to, code) {
   const transporter = createTransporter();
   const html = `<div style="font-family:sans-serif;max-width:500px;margin:auto;padding:30px;border:1px solid #e2e8f0;border-radius:12px;"><h2 style="color:#3b82f6;">AffiliateEngine — Email Verification</h2><p>Your verification code is:</p><div style="font-size:36px;font-weight:bold;letter-spacing:12px;text-align:center;padding:20px;background:#f1f5f9;border-radius:8px;margin:20px 0;">${code}</div><p style="color:#64748b;">This code expires in <strong>10 minutes</strong>.</p></div>`;
   try {
-    const info = await transporter.sendMail({ from: `"AffiliateEngine" <${process.env.EMAIL_USER}>`, to, subject: 'Verify your email — AffiliateEngine', html });
+    const info = await transporter.sendMail({
+      from: `"AffiliateEngine" <${process.env.EMAIL_USER}>`,
+      to,
+      subject: 'Verify your email — AffiliateEngine',
+      html
+    });
     console.log('✅ Email sent:', info.messageId);
     return { success: true };
   } catch (err) {
@@ -91,6 +104,7 @@ async function sendVerificationEmail(to, code) {
   }
 }
 
+// ── OTP Helpers ─────────────────────────────────────────────
 function generateOTP() { return Math.floor(100000 + Math.random() * 900000).toString(); }
 
 async function createOTP(email, type = 'email_verification') {
@@ -108,10 +122,12 @@ async function verifyOTP(email, code, type = 'email_verification') {
   return true;
 }
 
+// ── JWT ─────────────────────────────────────────────────────
 function generateToken(userId) {
   return jwt.sign({ id: userId }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
 }
 
+// ── Auth Middleware ─────────────────────────────────────────
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'Unauthorized' });
@@ -124,20 +140,26 @@ function authMiddleware(req, res, next) {
   }
 }
 
+// ── Validation ──────────────────────────────────────────────
 function validate(req, res, next) {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ success: false, message: errors.array()[0].msg });
   next();
 }
 
+// ── Routes ──────────────────────────────────────────────────
+
+// Health
 app.get('/health', (req, res) => {
   res.json({ success: true, status: 'healthy', timestamp: new Date().toISOString(), mongo: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
 });
 
+// API Root
 app.get('/api', (req, res) => {
   res.json({ success: true, message: 'AffiliateEngine Auth API v1.0.0' });
 });
 
+// Register
 app.post('/api/auth/register', authLimiter, [
   body('name').trim().isLength({ min: 2, max: 100 }).withMessage('Name must be 2-100 characters'),
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
@@ -164,6 +186,7 @@ app.post('/api/auth/register', authLimiter, [
   }
 });
 
+// Verify Email
 app.post('/api/auth/verify-email', [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
   body('code').isLength({ min: 6, max: 6 }).isNumeric().withMessage('6-digit code required')
@@ -182,6 +205,7 @@ app.post('/api/auth/verify-email', [
   }
 });
 
+// Resend Code
 app.post('/api/auth/resend-code', authLimiter, [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required')
 ], validate, async (req, res) => {
@@ -192,13 +216,14 @@ app.post('/api/auth/resend-code', authLimiter, [
     if (user.isVerified) return res.status(400).json({ success: false, message: 'Email already verified.' });
     const code = await createOTP(email, 'email_verification');
     const emailResult = await sendVerificationEmail(email, code);
-    if (!emailResult.success) return res.status(500).json({ success: false, message: 'Could not send email.' });
+    if (!emailResult.success) return res.status(500).json({ success: false, message: 'Could not send email.', error: emailResult.error });
     res.json({ success: true, message: 'Verification code resent!' });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error.' });
   }
 });
 
+// Login
 app.post('/api/auth/login', authLimiter, [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
   body('password').notEmpty().withMessage('Password required')
@@ -224,6 +249,7 @@ app.post('/api/auth/login', authLimiter, [
   }
 });
 
+// Me
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -234,19 +260,23 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+// Logout
 app.post('/api/auth/logout', authMiddleware, (req, res) => {
   res.json({ success: true, message: 'Logged out successfully.' });
 });
 
+// 404
 app.use((req, res) => {
   res.status(404).json({ success: false, message: `Route ${req.method} ${req.path} not found.` });
 });
 
+// Global Error Handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ success: false, message: 'Internal server error.' });
 });
 
+// ── Start ───────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 Health: http://localhost:${PORT}/health`);
