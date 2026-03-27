@@ -59,10 +59,7 @@ app.use(
 );
 
 // ─── HTTP Request Logger ──────────────────────────────────────────────────────
-const morganStream = {
-  write: (message) => logger.http(message.trim()),
-};
-app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev', { stream: morganStream }));
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 // ─── Body Parsing ─────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '10kb' }));
