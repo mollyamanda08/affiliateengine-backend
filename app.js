@@ -14,30 +14,30 @@ const { body, validationResult } = require('express-validator');
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
-// ── Middleware ──────────────────────────────────────────────
 app.use(helmet());
 app.use(cors({ origin: '*', methods: ['GET','POST','PUT','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'], credentials: false }));
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: false }));
 
-// ── Rate Limiting ───────────────────────────────────────────
-const globalLimiter = rateLimit({ windowMs: 15*60*1000, max: 100, standardHeaders: true, legacyHeaders: false });
-const authLimiter   = rateLimit({ windowMs: 15*60*1000, max: 20,  standardHeaders: true, legacyHeaders: false });
+const globalLimiter = rateLimit({ windowMs: 15*60*1000, max: 100 });
+const authLimiter   = rateLimit({ windowMs: 15*60*1000, max: 20 });
 app.use(globalLimiter);
 
-// ── MongoDB ─────────────────────────────────────────────────
 const MONGO_URI = process.env.MONGODB_URI || process.env.MONGO_URI;
-if (!MONGO_URI) { console.error('❌ MONGODB_URI is not set!'); }
+console.log('MongoDB URI exists:', !!MONGO_URI);
 
-mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 10000, socketTimeoutMS: 45000 })
-  .then(() => console.log('✅ MongoDB Connected'))
-  .catch(err => { console.error('❌ MongoDB Error:', err.message); });
+if (!MONGO_URI) {
+  console.error('MONGODB_URI is not set!');
+} else {
+  mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 10000 })
+    .then(() => console.log('✅ MongoDB Connected'))
+    .catch(err => console.error('❌ MongoDB Error:', err.message));
+}
 
-// ── Schemas ─────────────────────────────────────────────────
 const userSchema = new mongoose.Schema({
-  name:       { type: String, required: true, trim: true, minlength: 2, maxlength: 100 },
-  email:      { type: String, required: true, unique: true, lowercase: true, trim: true },
-  password:   { type: String, required: true, minlength: 6, select: false },
+  name:       { type: String, required: true, trim: true },
+  email:      { type: String, required: true, unique: true, lowercase: true },
+  password:   { type: String, required: true, select: false },
   isVerified: { type: Boolean, default: false },
   role:       { type: String, enum: ['user','admin'], default: 'user' },
   lastLogin:  { type: Date, default: null }
@@ -66,32 +66,21 @@ otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const OTP = mongoose.models.OTP || mongoose.model('OTP', otpSchema);
 
-// ── Email ───────────────────────────────────────────────────
 function createTransporter() {
   return nodemailer.createTransport({
-    host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port:   parseInt(process.env.EMAIL_PORT) || 587,
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.EMAIL_PORT) || 587,
     secure: process.env.EMAIL_SECURE === 'true',
-    auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    tls:    { rejectUnauthorized: false }
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+    tls: { rejectUnauthorized: false }
   });
 }
 
 async function sendVerificationEmail(to, code) {
   const transporter = createTransporter();
-  const html = `
-    <div style="font-family:sans-serif;max-width:500px;margin:auto;padding:30px;border:1px solid #e2e8f0;border-radius:12px;">
-      <h2 style="color:#3b82f6;">AffiliateEngine — Email Verification</h2>
-      <p>Your verification code is:</p>
-      <div style="font-size:36px;font-weight:bold;letter-spacing:12px;text-align:center;padding:20px;background:#f1f5f9;border-radius:8px;margin:20px 0;">${code}</div>
-      <p style="color:#64748b;">This code expires in <strong>10 minutes</strong>. Do not share it with anyone.</p>
-    </div>`;
+  const html = `<div style="font-family:sans-serif;max-width:500px;margin:auto;padding:30px;border:1px solid #e2e8f0;border-radius:12px;"><h2 style="color:#3b82f6;">AffiliateEngine — Email Verification</h2><p>Your verification code is:</p><div style="font-size:36px;font-weight:bold;letter-spacing:12px;text-align:center;padding:20px;background:#f1f5f9;border-radius:8px;margin:20px 0;">${code}</div><p style="color:#64748b;">This code expires in <strong>10 minutes</strong>.</p></div>`;
   try {
-    const info = await transporter.sendMail({
-      from:    `"${process.env.EMAIL_FROM_NAME||'AffiliateEngine'}" <${process.env.EMAIL_USER}>`,
-      to, subject: 'Verify your email — AffiliateEngine', html,
-      text: `Your AffiliateEngine verification code is: ${code}. Expires in 10 minutes.`
-    });
+    const info = await transporter.sendMail({ from: `"AffiliateEngine" <${process.env.EMAIL_USER}>`, to, subject: 'Verify your email — AffiliateEngine', html });
     console.log('✅ Email sent:', info.messageId);
     return { success: true };
   } catch (err) {
@@ -100,14 +89,13 @@ async function sendVerificationEmail(to, code) {
   }
 }
 
-// ── OTP Helpers ─────────────────────────────────────────────
 function generateOTP() { return Math.floor(100000 + Math.random() * 900000).toString(); }
 
 async function createOTP(email, type = 'email_verification') {
   await OTP.deleteMany({ email: email.toLowerCase(), type, used: false });
   const code = generateOTP();
-  const otp  = await OTP.create({ email: email.toLowerCase(), code, type, expiresAt: new Date(Date.now() + 10*60*1000) });
-  return otp.code;
+  await OTP.create({ email: email.toLowerCase(), code, type, expiresAt: new Date(Date.now() + 10*60*1000) });
+  return code;
 }
 
 async function verifyOTP(email, code, type = 'email_verification') {
@@ -118,21 +106,15 @@ async function verifyOTP(email, code, type = 'email_verification') {
   return true;
 }
 
-// ── JWT ─────────────────────────────────────────────────────
 function generateToken(userId) {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET || 'fallback_secret_change_this', { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
 }
 
-function verifyToken(token) {
-  return jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_change_this');
-}
-
-// ── Auth Middleware ─────────────────────────────────────────
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) return res.status(401).json({ success: false, message: 'Unauthorized' });
   try {
-    const decoded = verifyToken(header.split(' ')[1]);
+    const decoded = jwt.verify(header.split(' ')[1], process.env.JWT_SECRET || 'fallback_secret');
     req.userId = decoded.id;
     next();
   } catch {
@@ -140,28 +122,20 @@ function authMiddleware(req, res, next) {
   }
 }
 
-// ── Validation ──────────────────────────────────────────────
 function validate(req, res, next) {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ success: false, message: errors.array()[0].msg, errors: errors.array() });
-  }
+  if (!errors.isEmpty()) return res.status(400).json({ success: false, message: errors.array()[0].msg });
   next();
 }
 
-// ── Routes ──────────────────────────────────────────────────
-
-// Health
 app.get('/health', (req, res) => {
-  res.json({ success: true, status: 'healthy', timestamp: new Date().toISOString(), uptime: process.uptime(), mongo: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
+  res.json({ success: true, status: 'healthy', timestamp: new Date().toISOString(), mongo: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
 });
 
-// API Root
 app.get('/api', (req, res) => {
-  res.json({ success: true, message: 'AffiliateEngine Auth API', version: '1.0.0', endpoints: { register: 'POST /api/auth/register', verifyEmail: 'POST /api/auth/verify-email', resendCode: 'POST /api/auth/resend-code', login: 'POST /api/auth/login', me: 'GET /api/auth/me', logout: 'POST /api/auth/logout' }});
+  res.json({ success: true, message: 'AffiliateEngine Auth API v1.0.0' });
 });
 
-// Register
 app.post('/api/auth/register', authLimiter, [
   body('name').trim().isLength({ min: 2, max: 100 }).withMessage('Name must be 2-100 characters'),
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
@@ -181,16 +155,13 @@ app.post('/api/auth/register', authLimiter, [
     const user = await User.create({ name, email, password });
     const code = await createOTP(email, 'email_verification');
     const emailResult = await sendVerificationEmail(email, code);
-    const response = { success: true, message: 'Registration successful! Check your email for the verification code.', email, userId: user._id };
-    if (!emailResult.success) { response.emailWarning = 'Could not send verification email. Please use resend option.'; response.devCode = process.env.NODE_ENV !== 'production' ? code : undefined; }
-    res.status(201).json(response);
+    res.status(201).json({ success: true, message: 'Registration successful! Check your email for the verification code.', email, userId: user._id, emailSent: emailResult.success });
   } catch (err) {
     console.error('Register error:', err);
-    res.status(500).json({ success: false, message: 'Server error. Please try again.', error: process.env.NODE_ENV !== 'production' ? err.message : undefined });
+    res.status(500).json({ success: false, message: 'Server error.', error: process.env.NODE_ENV !== 'production' ? err.message : undefined });
   }
 });
 
-// Verify Email
 app.post('/api/auth/verify-email', [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
   body('code').isLength({ min: 6, max: 6 }).isNumeric().withMessage('6-digit code required')
@@ -198,7 +169,7 @@ app.post('/api/auth/verify-email', [
   try {
     const { email, code } = req.body;
     const valid = await verifyOTP(email, code, 'email_verification');
-    if (!valid) return res.status(400).json({ success: false, message: 'Invalid or expired code. Please request a new one.' });
+    if (!valid) return res.status(400).json({ success: false, message: 'Invalid or expired code.' });
     const user = await User.findOneAndUpdate({ email: email.toLowerCase() }, { isVerified: true, lastLogin: new Date() }, { new: true });
     if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
     const token = generateToken(user._id);
@@ -209,28 +180,23 @@ app.post('/api/auth/verify-email', [
   }
 });
 
-// Resend Code
 app.post('/api/auth/resend-code', authLimiter, [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required')
 ], validate, async (req, res) => {
   try {
     const { email } = req.body;
     const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user) return res.status(404).json({ success: false, message: 'No account found with this email.' });
+    if (!user) return res.status(404).json({ success: false, message: 'No account found.' });
     if (user.isVerified) return res.status(400).json({ success: false, message: 'Email already verified.' });
     const code = await createOTP(email, 'email_verification');
     const emailResult = await sendVerificationEmail(email, code);
-    if (!emailResult.success) {
-      return res.status(500).json({ success: false, message: 'Could not send email. Please try again.', error: emailResult.error });
-    }
-    res.json({ success: true, message: 'Verification code resent! Check your email.' });
+    if (!emailResult.success) return res.status(500).json({ success: false, message: 'Could not send email.' });
+    res.json({ success: true, message: 'Verification code resent!' });
   } catch (err) {
-    console.error('Resend error:', err);
     res.status(500).json({ success: false, message: 'Server error.' });
   }
 });
 
-// Login
 app.post('/api/auth/login', authLimiter, [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
   body('password').notEmpty().withMessage('Password required')
@@ -256,7 +222,6 @@ app.post('/api/auth/login', authLimiter, [
   }
 });
 
-// Me
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -267,21 +232,19 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
-// Logout
 app.post('/api/auth/logout', authMiddleware, (req, res) => {
   res.json({ success: true, message: 'Logged out successfully.' });
 });
 
-// 404
-app.use((req, res) => { res.status(404).json({ success: false, message: `Route ${req.method} ${req.path} not found.` }); });
-
-// Global Error Handler
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ success: false, message: 'Internal server error.', error: process.env.NODE_ENV !== 'production' ? err.message : undefined });
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: `Route ${req.method} ${req.path} not found.` });
 });
 
-// ── Start ───────────────────────────────────────────────────
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ success: false, message: 'Internal server error.' });
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 Health: http://localhost:${PORT}/health`);
