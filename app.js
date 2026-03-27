@@ -7,7 +7,7 @@ const mongoSanitize = require('express-mongo-sanitize');
 
 // const logger = require('./utils/logger');
 const { generalLimiter } = require('./rateLimiter');
-const { notFound, errorHandler } = require('./middleware/errorHandler');
+const { notFound, errorHandler } = require('./errorHandler');
 
 // ─── Route Imports ────────────────────────────────────────────────────────────
 const authRoutes = require('./routes/authRoutes');
