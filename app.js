@@ -11,7 +11,7 @@ const { notFound, errorHandler } = require('./errorHandler');
 
 // ─── Route Imports ────────────────────────────────────────────────────────────
 const authRoutes = require('./authRoutes');
-const healthRoutes = require('./routes/healthRoutes');
+const healthRoutes = require('./healthRoutes');
 
 const app = express();
 
