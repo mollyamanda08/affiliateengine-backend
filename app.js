@@ -6,7 +6,7 @@ const cookieParser = require('cookie-parser');
 const mongoSanitize = require('express-mongo-sanitize');
 
 // const logger = require('./utils/logger');
-const { generalLimiter } = require('./middleware/rateLimiter');
+const { generalLimiter } = require('./rateLimiter');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
 // ─── Route Imports ────────────────────────────────────────────────────────────
