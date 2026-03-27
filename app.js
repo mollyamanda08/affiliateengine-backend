@@ -339,9 +339,7 @@ const sendEmail = async ({ to, subject, html, text }) => {
   const transport = getTransporter();
   const info = await transport.sendMail({
     from: `"${process.env.EMAIL_FROM_NAME || 'AffiliateEngine'}" <${process.env.GMAIL_USER}>`,
-    to,
-    subject,
-    html,
+    to, subject, html,
     text: text || 'Please view this email in an HTML-capable client.',
   });
   logger.info(`📧 Email sent to ${to} | ID: ${info.messageId}`);
@@ -384,38 +382,25 @@ const generateAccessToken = (userId) =>
   jwt.sign(
     { id: userId, type: 'access' },
     process.env.JWT_SECRET,
-    {
-      expiresIn: process.env.JWT_EXPIRES_IN || '7d',
-      issuer: 'affiliateengine',
-      audience: 'affiliateengine-client',
-    }
+    { expiresIn: process.env.JWT_EXPIRES_IN || '7d', issuer: 'affiliateengine', audience: 'affiliateengine-client' }
   );
 
 const generateRefreshToken = (userId) =>
   jwt.sign(
     { id: userId, type: 'refresh' },
     process.env.JWT_REFRESH_SECRET,
-    {
-      expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d',
-      issuer: 'affiliateengine',
-      audience: 'affiliateengine-client',
-    }
+    { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d', issuer: 'affiliateengine', audience: 'affiliateengine-client' }
   );
 
 const setTokenCookies = (res, accessToken, refreshToken) => {
   const isProd = process.env.NODE_ENV === 'production';
   res.cookie('accessToken', accessToken, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? 'strict' : 'lax',
+    httpOnly: true, secure: isProd, sameSite: isProd ? 'strict' : 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
   res.cookie('refreshToken', refreshToken, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? 'strict' : 'lax',
-    maxAge: 30 * 24 * 60 * 60 * 1000,
-    path: '/api/auth/refresh-token',
+    httpOnly: true, secure: isProd, sameSite: isProd ? 'strict' : 'lax',
+    maxAge: 30 * 24 * 60 * 60 * 1000, path: '/api/auth/refresh-token',
   });
 };
 
@@ -436,7 +421,6 @@ const fail = (res, statusCode = 500, message = 'Internal Server Error', errors =
 //  SECTION 9 — MIDDLEWARE
 // ─────────────────────────────────────────────────────────────
 
-// ── Validate request (express-validator) ──
 const validateRequest = (req, res, next) => {
   const errs = validationResult(req);
   if (!errs.isEmpty()) {
@@ -446,7 +430,6 @@ const validateRequest = (req, res, next) => {
   next();
 };
 
-// ── JWT Auth protect ──
 const protect = async (req, res, next) => {
   try {
     let token;
@@ -455,20 +438,19 @@ const protect = async (req, res, next) => {
     } else if (req.cookies?.accessToken) {
       token = req.cookies.accessToken;
     }
-
     if (!token) return fail(res, 401, 'Access denied. No token provided.');
 
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
     } catch (e) {
-      if (e.name === 'TokenExpiredError')  return fail(res, 401, 'Token has expired. Please log in again.');
-      if (e.name === 'JsonWebTokenError')  return fail(res, 401, 'Invalid token. Please log in again.');
+      if (e.name === 'TokenExpiredError') return fail(res, 401, 'Token has expired. Please log in again.');
+      if (e.name === 'JsonWebTokenError') return fail(res, 401, 'Invalid token. Please log in again.');
       throw e;
     }
 
     const user = await User.findById(decoded.id).select('-password');
-    if (!user)                          return fail(res, 401, 'User no longer exists.');
+    if (!user)                           return fail(res, 401, 'User no longer exists.');
     if (!user.isActive || user.isBanned) return fail(res, 403, 'Account suspended. Contact support.');
 
     req.user = user;
@@ -479,47 +461,38 @@ const protect = async (req, res, next) => {
   }
 };
 
-// ── Require verified email ──
 const requireEmailVerified = (req, res, next) => {
   if (!req.user.isEmailVerified)
     return fail(res, 403, 'Email verification required to access this resource.');
   next();
 };
 
-// ── Role-based access ──
 const authorize = (...roles) => (req, res, next) => {
   if (!roles.includes(req.user.role))
     return fail(res, 403, `Access denied. Required roles: ${roles.join(', ')}`);
   next();
 };
 
-// ── Rate limiters ──
 const generalLimiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
   max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '100', 10),
-  standardHeaders: true,
-  legacyHeaders: false,
+  standardHeaders: true, legacyHeaders: false,
   handler: (req, res) => fail(res, 429, 'Too many requests. Try again after 15 minutes.'),
 });
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '10', 10),
-  standardHeaders: true,
-  legacyHeaders: false,
-  skipSuccessfulRequests: true,
+  standardHeaders: true, legacyHeaders: false, skipSuccessfulRequests: true,
   handler: (req, res) => fail(res, 429, 'Too many auth attempts. Wait 15 minutes.'),
 });
 
 const otpResendLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000,
-  max: 3,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 5 * 60 * 1000, max: 3,
+  standardHeaders: true, legacyHeaders: false,
   handler: (req, res) => fail(res, 429, 'Too many OTP requests. Wait 5 minutes.'),
 });
 
-// ── Global error handler ──
 const errorHandler = (err, req, res, next) => {
   let statusCode = err.statusCode || err.status || 500;
   let message    = err.message || 'Internal Server Error';
@@ -527,17 +500,12 @@ const errorHandler = (err, req, res, next) => {
   if (err.name === 'ValidationError') {
     statusCode = 400;
     const errs = Object.values(err.errors).map((e) => ({ field: e.path, message: e.message }));
-    logger.warn(`Validation error: ${JSON.stringify(errs)}`);
     return fail(res, statusCode, 'Validation failed', errs);
   }
-
   if (err.code === 11000) {
-    statusCode = 409;
     const field = Object.keys(err.keyValue || {})[0];
-    message = `An account with this ${field || 'value'} already exists.`;
-    return fail(res, statusCode, message);
+    return fail(res, 409, `An account with this ${field || 'value'} already exists.`);
   }
-
   if (err.name === 'CastError')         { statusCode = 400; message = `Invalid ${err.path}: ${err.value}`; }
   if (err.name === 'JsonWebTokenError') { statusCode = 401; message = 'Invalid token.'; }
   if (err.name === 'TokenExpiredError') { statusCode = 401; message = 'Token expired.'; }
@@ -589,10 +557,10 @@ const loginValidation = [
 ];
 
 // ─────────────────────────────────────────────────────────────
-//  SECTION 11 — ROUTE HANDLERS (CONTROLLERS)
+//  SECTION 11 — ROUTE HANDLERS
 // ─────────────────────────────────────────────────────────────
 
-// ── POST /api/auth/register ──────────────────────────────────
+// POST /api/auth/register
 const handleRegister = async (req, res, next) => {
   try {
     const { firstName, lastName, email, password } = req.body;
@@ -602,7 +570,6 @@ const handleRegister = async (req, res, next) => {
       if (existing.isEmailVerified)
         return fail(res, 409, 'An account with this email already exists. Please log in.');
 
-      // Unverified account — regenerate OTP and resend
       const otp    = generateOTP(parseInt(process.env.OTP_LENGTH || '6', 10));
       const expiry = generateOTPExpiry(parseInt(process.env.OTP_EXPIRES_MINUTES || '10', 10));
       existing.emailVerificationOTP        = otp;
@@ -631,16 +598,14 @@ const handleRegister = async (req, res, next) => {
     catch (e) { logger.error(`OTP email failed: ${e.message}`); }
 
     logger.info(`New user registered: ${user.email}`);
-
     return ok(res, 201, 'Registration successful! Check your email for the verification code.', {
-      email: user.email,
-      requiresVerification: true,
+      email: user.email, requiresVerification: true,
       otpExpiresIn: `${process.env.OTP_EXPIRES_MINUTES || 10} minutes`,
     });
   } catch (err) { next(err); }
 };
 
-// ── POST /api/auth/verify-email ──────────────────────────────
+// POST /api/auth/verify-email
 const handleVerifyEmail = async (req, res, next) => {
   try {
     const { email, otp } = req.body;
@@ -649,12 +614,10 @@ const handleVerifyEmail = async (req, res, next) => {
       '+emailVerificationOTP +emailVerificationOTPExpires +emailVerificationAttempts'
     );
 
-    if (!user)               return fail(res, 404, 'No account found with this email.');
-    if (user.isEmailVerified) return fail(res, 400, 'Email already verified. Please log in.');
-
+    if (!user)                return fail(res, 404, 'No account found with this email.');
+    if (user.isEmailVerified)  return fail(res, 400, 'Email already verified. Please log in.');
     if (user.emailVerificationAttempts >= 5)
       return fail(res, 429, 'Too many failed attempts. Request a new code.');
-
     if (!user.emailVerificationOTPExpires || isOTPExpired(user.emailVerificationOTPExpires))
       return fail(res, 400, 'Verification code has expired. Request a new one.');
 
@@ -665,7 +628,7 @@ const handleVerifyEmail = async (req, res, next) => {
       return fail(res, 400, `Invalid code. ${left > 0 ? `${left} attempt(s) remaining.` : 'No attempts left. Request a new code.'}`);
     }
 
-    // ✅ Valid OTP
+    // ✅ OTP is valid
     user.isEmailVerified             = true;
     user.emailVerificationOTP        = undefined;
     user.emailVerificationOTPExpires = undefined;
@@ -685,7 +648,6 @@ const handleVerifyEmail = async (req, res, next) => {
     catch (e) { logger.error(`Welcome email failed: ${e.message}`); }
 
     logger.info(`Email verified: ${user.email}`);
-
     return ok(res, 200, 'Email verified! Welcome to AffiliateEngine.', {
       user: user.toSafeObject(),
       tokens: { accessToken, refreshToken, expiresIn: process.env.JWT_EXPIRES_IN || '7d' },
@@ -693,7 +655,7 @@ const handleVerifyEmail = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// ── POST /api/auth/resend-otp ────────────────────────────────
+// POST /api/auth/resend-otp
 const handleResendOTP = async (req, res, next) => {
   try {
     const { email } = req.body;
@@ -702,8 +664,8 @@ const handleResendOTP = async (req, res, next) => {
       '+emailVerificationOTP +emailVerificationOTPExpires +emailVerificationAttempts'
     );
 
-    if (!user)               return fail(res, 404, 'No account found with this email.');
-    if (user.isEmailVerified) return fail(res, 400, 'This email is already verified.');
+    if (!user)                return fail(res, 404, 'No account found with this email.');
+    if (user.isEmailVerified)  return fail(res, 400, 'This email is already verified.');
 
     const otp    = generateOTP(parseInt(process.env.OTP_LENGTH || '6', 10));
     const expiry = generateOTPExpiry(parseInt(process.env.OTP_EXPIRES_MINUTES || '10', 10));
@@ -714,7 +676,6 @@ const handleResendOTP = async (req, res, next) => {
     await user.save();
 
     await sendResendOTPEmail({ to: user.email, name: user.firstName, otp });
-
     logger.info(`OTP resent to: ${user.email}`);
 
     return ok(res, 200, 'New verification code sent to your email.', {
@@ -724,7 +685,7 @@ const handleResendOTP = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// ── POST /api/auth/login ─────────────────────────────────────
+// POST /api/auth/login
 const handleLogin = async (req, res, next) => {
   try {
     const { email, password } = req.body;
@@ -742,7 +703,6 @@ const handleLogin = async (req, res, next) => {
     }
 
     if (!user.isEmailVerified) {
-      // Resend OTP silently
       const otp    = generateOTP(parseInt(process.env.OTP_LENGTH || '6', 10));
       const expiry = generateOTPExpiry(parseInt(process.env.OTP_EXPIRES_MINUTES || '10', 10));
       await User.updateOne({ _id: user._id }, {
@@ -768,7 +728,6 @@ const handleLogin = async (req, res, next) => {
     await user.save();
 
     setTokenCookies(res, accessToken, refreshToken);
-
     logger.info(`User logged in: ${user.email} | IP: ${req.ip}`);
 
     return ok(res, 200, 'Login successful!', {
@@ -778,7 +737,7 @@ const handleLogin = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// ── POST /api/auth/refresh-token ─────────────────────────────
+// POST /api/auth/refresh-token
 const handleRefreshToken = async (req, res, next) => {
   try {
     const token = req.body.refreshToken || req.cookies.refreshToken;
@@ -802,20 +761,17 @@ const handleRefreshToken = async (req, res, next) => {
     await user.save();
 
     setTokenCookies(res, newAccessToken, newRefreshToken);
-
     return ok(res, 200, 'Token refreshed.', {
       tokens: { accessToken: newAccessToken, refreshToken: newRefreshToken, expiresIn: process.env.JWT_EXPIRES_IN || '7d' },
     });
   } catch (err) { next(err); }
 };
 
-// ── POST /api/auth/logout ────────────────────────────────────
+// POST /api/auth/logout
 const handleLogout = async (req, res, next) => {
   try {
     const token = req.body.refreshToken || req.cookies.refreshToken;
-    if (token) {
-      await User.findByIdAndUpdate(req.user._id, { $pull: { refreshTokens: token } });
-    }
+    if (token) await User.findByIdAndUpdate(req.user._id, { $pull: { refreshTokens: token } });
     res.clearCookie('accessToken');
     res.clearCookie('refreshToken', { path: '/api/auth/refresh-token' });
     logger.info(`User logged out: ${req.user.email}`);
@@ -823,7 +779,7 @@ const handleLogout = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// ── GET /api/auth/me ─────────────────────────────────────────
+// GET /api/auth/me
 const handleGetMe = async (req, res, next) => {
   try {
     const user = await User.findById(req.user._id);
@@ -840,7 +796,6 @@ const app = express();
 
 app.set('trust proxy', 1);
 
-// ── Security headers ──
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -853,7 +808,6 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
-// ── CORS ──
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.APP_URL,
@@ -864,49 +818,41 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin)                                       return cb(null, true);
-    if (allowedOrigins.includes(origin))               return cb(null, true);
-    if (process.env.NODE_ENV !== 'production')         return cb(null, true);
-    cb(new Error(`CORS policy: Origin ${origin} not allowed.`));
+    if (!origin)                                return cb(null, true);
+    if (allowedOrigins.includes(origin))        return cb(null, true);
+    if (process.env.NODE_ENV !== 'production')  return cb(null, true);
+    cb(new Error(`CORS: Origin ${origin} not allowed.`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
 
-// ── HTTP logging ──
 app.use(morgan(
   process.env.NODE_ENV === 'production' ? 'combined' : 'dev',
   { stream: { write: (msg) => logger.http(msg.trim()) } }
 ));
 
-// ── Body parsing ──
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 app.use(cookieParser());
-
-// ── NoSQL injection prevention ──
 app.use(mongoSanitize());
-
-// ── Global rate limit ──
 app.use('/api/', generalLimiter);
 
 // ─────────────────────────────────────────────────────────────
 //  SECTION 13 — ROUTES
 // ─────────────────────────────────────────────────────────────
 
-// ── Health check ──
 app.get('/health', (req, res) => {
-  const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
-  const dbStatus = states[mongoose.connection.readyState] || 'unknown';
-  const statusCode = mongoose.connection.readyState === 1 ? 200 : 503;
-
-  res.status(statusCode).json({
-    status:      statusCode === 200 ? 'ok' : 'degraded',
+  const states    = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+  const dbStatus  = states[mongoose.connection.readyState] || 'unknown';
+  const isUp      = mongoose.connection.readyState === 1;
+  res.status(isUp ? 200 : 503).json({
+    status:      isUp ? 'ok' : 'degraded',
     service:     'AffiliateEngine API',
-    version:     process.env.npm_package_version || '1.0.0',
+    version:     '1.0.0',
     environment: process.env.NODE_ENV || 'development',
-    database:    { status: dbStatus, connected: mongoose.connection.readyState === 1 },
+    database:    { status: dbStatus, connected: isUp },
     uptime:      Math.floor(process.uptime()),
     memory: {
       used:  `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`,
@@ -916,13 +862,9 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ── Root info ──
 app.get('/', (req, res) => {
   res.json({
-    name:        'AffiliateEngine API',
-    version:     '1.0.0',
-    description: 'Single-file backend for AffiliateEngine',
-    health:      '/health',
+    name: 'AffiliateEngine API', version: '1.0.0',
     endpoints: {
       register:     'POST /api/auth/register',
       verifyEmail:  'POST /api/auth/verify-email',
@@ -931,11 +873,11 @@ app.get('/', (req, res) => {
       logout:       'POST /api/auth/logout',
       refreshToken: 'POST /api/auth/refresh-token',
       profile:      'GET  /api/auth/me',
+      health:       'GET  /health',
     },
   });
 });
 
-// ── Auth routes ──
 app.post('/api/auth/register',      authLimiter,      registerValidation,    validateRequest, handleRegister);
 app.post('/api/auth/verify-email',  authLimiter,      verifyEmailValidation, validateRequest, handleVerifyEmail);
 app.post('/api/auth/resend-otp',    otpResendLimiter, resendOTPValidation,   validateRequest, handleResendOTP);
@@ -944,10 +886,7 @@ app.post('/api/auth/refresh-token',                                             
 app.post('/api/auth/logout',        protect,                                                  handleLogout);
 app.get( '/api/auth/me',            protect,          requireEmailVerified,                   handleGetMe);
 
-// ── 404 handler ──
 app.use((req, res) => fail(res, 404, `Route not found: ${req.method} ${req.originalUrl}`));
-
-// ── Global error handler ──
 app.use(errorHandler);
 
 // ─────────────────────────────────────────────────────────────
@@ -960,29 +899,27 @@ process.on('uncaughtException', (err) => {
 });
 
 const PORT = parseInt(process.env.PORT || '5000', 10);
-const HOST = '0.0.0.0'; // Required for Render.com
+const HOST = '0.0.0.0';
 
 const startServer = async () => {
   try {
     await connectDB();
-
     const server = app.listen(PORT, HOST, () => {
-      logger.info(`🚀 AffiliateEngine API running on port ${PORT}`);
-      logger.info(`📍 Environment : ${process.env.NODE_ENV || 'development'}`);
-      logger.info(`🌐 Health check: http://${HOST}:${PORT}/health`);
+      logger.info(`🚀 AffiliateEngine API → port ${PORT}`);
+      logger.info(`📍 Env: ${process.env.NODE_ENV || 'development'}`);
+      logger.info(`🌐 Health: http://${HOST}:${PORT}/health`);
     });
 
     process.on('unhandledRejection', (reason) => {
       logger.error('UNHANDLED REJECTION', { reason });
       server.close(() => process.exit(1));
     });
-
     process.on('SIGTERM', () => {
-      logger.info('SIGTERM received. Shutting down gracefully...');
+      logger.info('SIGTERM → graceful shutdown...');
       server.close(() => { logger.info('Server closed.'); process.exit(0); });
     });
   } catch (err) {
-    logger.error(`Server startup failed: ${err.message}`);
+    logger.error(`Startup failed: ${err.message}`);
     process.exit(1);
   }
 };
