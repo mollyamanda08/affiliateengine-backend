@@ -13,7 +13,7 @@ const { body, validationResult } = require('express-validator');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
-
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({ origin: '*', methods: ['GET','POST','PUT','DELETE','OPTIONS'], allowedHeaders: ['Content-Type','Authorization'], credentials: false }));
 app.use(express.json({ limit: '10kb' }));
@@ -68,11 +68,13 @@ const OTP = mongoose.models.OTP || mongoose.model('OTP', otpSchema);
 
 function createTransporter() {
   return nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.EMAIL_PORT) || 587,
-    secure: process.env.EMAIL_SECURE === 'true',
-    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    tls: { rejectUnauthorized: false }
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: { 
+      user: process.env.EMAIL_USER, 
+      pass: process.env.EMAIL_PASS 
+    }
   });
 }
 
