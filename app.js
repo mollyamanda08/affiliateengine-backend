@@ -10,7 +10,7 @@ const { generalLimiter } = require('./rateLimiter');
 const { notFound, errorHandler } = require('./errorHandler');
 
 // ─── Route Imports ────────────────────────────────────────────────────────────
-const authRoutes = require('./routes/authRoutes');
+const authRoutes = require('./authRoutes');
 const healthRoutes = require('./routes/healthRoutes');
 
 const app = express();
