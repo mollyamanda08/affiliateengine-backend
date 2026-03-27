@@ -5,7 +5,7 @@ const express    = require('express');
 const mongoose   = require('mongoose');
 const bcrypt     = require('bcryptjs');
 const jwt        = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
+const https      = require('https');
 const cors       = require('cors');
 const helmet     = require('helmet');
 const rateLimit  = require('express-rate-limit');
@@ -73,35 +73,56 @@ otpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 const OTP = mongoose.models.OTP || mongoose.model('OTP', otpSchema);
 
-// ── Email ───────────────────────────────────────────────────
-function createTransporter() {
-  return nodemailer.createTransport({
-    host: process.env.EMAIL_HOST,
-    port: parseInt(process.env.EMAIL_PORT) || 587,
-    secure: false,
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS
-    }
-  });
-}
-
+// ── Brevo API Email ─────────────────────────────────────────
 async function sendVerificationEmail(to, code) {
-  const transporter = createTransporter();
-  const html = `<div style="font-family:sans-serif;max-width:500px;margin:auto;padding:30px;border:1px solid #e2e8f0;border-radius:12px;"><h2 style="color:#3b82f6;">AffiliateEngine — Email Verification</h2><p>Your verification code is:</p><div style="font-size:36px;font-weight:bold;letter-spacing:12px;text-align:center;padding:20px;background:#f1f5f9;border-radius:8px;margin:20px 0;">${code}</div><p style="color:#64748b;">This code expires in <strong>10 minutes</strong>.</p></div>`;
-  try {
-    const info = await transporter.sendMail({
-      from: `"AffiliateEngine" <${process.env.EMAIL_USER}>`,
-      to,
+  return new Promise((resolve) => {
+    const data = JSON.stringify({
+      sender: { name: 'AffiliateEngine', email: process.env.EMAIL_USER },
+      to: [{ email: to }],
       subject: 'Verify your email — AffiliateEngine',
-      html
+      htmlContent: `
+        <div style="font-family:sans-serif;max-width:500px;margin:auto;padding:30px;border:1px solid #e2e8f0;border-radius:12px;">
+          <h2 style="color:#3b82f6;">AffiliateEngine — Email Verification</h2>
+          <p>Your verification code is:</p>
+          <div style="font-size:36px;font-weight:bold;letter-spacing:12px;text-align:center;padding:20px;background:#f1f5f9;border-radius:8px;margin:20px 0;">${code}</div>
+          <p style="color:#64748b;">This code expires in <strong>10 minutes</strong>.</p>
+        </div>`
     });
-    console.log('✅ Email sent:', info.messageId);
-    return { success: true };
-  } catch (err) {
-    console.error('❌ Email error:', err.message);
-    return { success: false, error: err.message };
-  }
+
+    const options = {
+      hostname: 'api.brevo.com',
+      path: '/v3/smtp/email',
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'api-key': process.env.BREVO_API_KEY,
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(data)
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        if (res.statusCode === 201) {
+          console.log('✅ Email sent via Brevo API');
+          resolve({ success: true });
+        } else {
+          console.error('❌ Brevo API error:', res.statusCode, body);
+          resolve({ success: false, error: body });
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      console.error('❌ Email request error:', err.message);
+      resolve({ success: false, error: err.message });
+    });
+
+    req.write(data);
+    req.end();
+  });
 }
 
 // ── OTP Helpers ─────────────────────────────────────────────
@@ -149,17 +170,14 @@ function validate(req, res, next) {
 
 // ── Routes ──────────────────────────────────────────────────
 
-// Health
 app.get('/health', (req, res) => {
   res.json({ success: true, status: 'healthy', timestamp: new Date().toISOString(), mongo: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected' });
 });
 
-// API Root
 app.get('/api', (req, res) => {
   res.json({ success: true, message: 'AffiliateEngine Auth API v1.0.0' });
 });
 
-// Register
 app.post('/api/auth/register', authLimiter, [
   body('name').trim().isLength({ min: 2, max: 100 }).withMessage('Name must be 2-100 characters'),
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
@@ -186,7 +204,6 @@ app.post('/api/auth/register', authLimiter, [
   }
 });
 
-// Verify Email
 app.post('/api/auth/verify-email', [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
   body('code').isLength({ min: 6, max: 6 }).isNumeric().withMessage('6-digit code required')
@@ -205,7 +222,6 @@ app.post('/api/auth/verify-email', [
   }
 });
 
-// Resend Code
 app.post('/api/auth/resend-code', authLimiter, [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required')
 ], validate, async (req, res) => {
@@ -223,7 +239,6 @@ app.post('/api/auth/resend-code', authLimiter, [
   }
 });
 
-// Login
 app.post('/api/auth/login', authLimiter, [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
   body('password').notEmpty().withMessage('Password required')
@@ -249,7 +264,6 @@ app.post('/api/auth/login', authLimiter, [
   }
 });
 
-// Me
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.userId);
@@ -260,27 +274,24 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
-// Logout
 app.post('/api/auth/logout', authMiddleware, (req, res) => {
   res.json({ success: true, message: 'Logged out successfully.' });
 });
 
-// 404
 app.use((req, res) => {
   res.status(404).json({ success: false, message: `Route ${req.method} ${req.path} not found.` });
 });
 
-// Global Error Handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ success: false, message: 'Internal server error.' });
 });
 
-// ── Start ───────────────────────────────────────────────────
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📡 Health: http://localhost:${PORT}/health`);
   console.log(`📡 API: http://localhost:${PORT}/api`);
+  console.log(`📧 Brevo API Key exists: ${!!process.env.BREVO_API_KEY}`);
 });
 
 module.exports = app;
